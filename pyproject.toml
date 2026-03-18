@@ -1,0 +1,86 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "msww-variablematcher"
+version = "0.1.0"
+description = "Variable matching between SAV files using embeddings and Vertex AI Gemini verification"
+requires-python = ">=3.11"
+readme = "README.md"
+keywords = ["survey", "variable-matching", "embeddings", "vertex-ai", "gemini", "spss", "sav"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "pyreadstat>=1.2.0",
+    "pyyaml>=6.0.0",
+    "google-genai>=1.0.0",
+    "google-cloud-bigquery>=3.11.0",
+    "scikit-learn>=1.3.0",
+    "msww-variablerecoder>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.2.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.0.0",
+    "pandas-stubs>=2.0.0",
+    "types-PyYAML>=6.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/msww/variablematcher"
+Repository = "https://github.com/msww/variablematcher.git"
+"Bug Tracker" = "https://github.com/msww/variablematcher/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/variablematcher"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/",
+    "README.md",
+    "pyproject.toml",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+strict = true
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "D", "UP", "ANN", "B", "C4", "SIM"]
+ignore = ["D100", "D104"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

@@ -1,0 +1,89 @@
+match_verification:
+  instruction: |
+    You are a survey variable matching and recoding expert.
+
+    You will receive one TARGET variable and one or more CANDIDATE
+    variables (ranked by embedding similarity). Your task is to:
+
+    1. Decide which candidate (if any) is the best semantic match for the
+       target variable.
+    2. If a match exists, decide whether the values need recoding to align.
+    3. If recoding is needed, design a single standardised variable with a
+       unified value scheme and provide recode instructions for both the
+       candidate and target variables.
+
+    The variables have already been standardised: variable labels are phrased
+    as questions (e.g., "What is your age?") and value labels are phrased as
+    first-person statements (e.g., "I am between 25 and 34 years old.").
+
+    Consider:
+    - Variable names may differ (e.g., "Q1_Age" vs "AGE" vs "age_band")
+    - Questions may be worded differently but mean the same thing
+    - Value codes may differ but represent the same response
+    - Statements may be phrased differently but carry the same meaning
+    - One variable may have more granular values than the other — group values
+      where necessary so both variables align to a common scheme
+    - The similarity score is a useful hint but NOT decisive — always verify
+      semantic equivalence yourself
+
+    A match means the variables measure the same or highly overlapping concept
+    and their values can be meaningfully aligned (possibly with grouping).
+
+    NOT a match means the variables measure different concepts, or the
+    similarity is coincidental (e.g., both use agree/disagree but for
+    unrelated questions).
+
+    When recoding IS needed and you are designing the standardised variable:
+    - Choose a clear, descriptive label for the standardised variable
+    - Create a minimal set of values that captures the shared meaning
+    - Group values where scales differ (e.g., collapse a 5-point scale to
+      match a 3-point scale)
+    - Assign new integer codes starting from 1
+    - Use clear, concise labels for the standardised values
+
+    Recoding is NOT needed when both variables already share the same value
+    codes and labels (or semantically identical labels). In that case, set
+    needs_recode to false and omit the recode arrays.
+
+  response_format: |
+    Respond with a JSON object in the following format:
+    {
+      "matched_variable": "name_of_best_matching_candidate_or_null",
+      "is_match": true/false,
+      "match_confidence": 0.0-1.0,
+      "needs_recode": true/false,
+      "reasoning": "Brief explanation of match decision and any grouping applied",
+      "standardised_label": "Clear question for the standardised variable (if matched)",
+      "candidate_recodes": [
+        {
+          "original_code": <original code in matched candidate variable>,
+          "original_label": "original statement in matched candidate variable",
+          "new_code": <new standardised integer code>,
+          "new_label": "new standardised statement"
+        }
+      ],
+      "target_recodes": [
+        {
+          "original_code": <original code in target variable>,
+          "original_label": "original statement in target variable",
+          "new_code": <new standardised integer code>,
+          "new_label": "new standardised statement"
+        }
+      ]
+    }
+
+    Rules:
+    - matched_variable must be the name of exactly one candidate, or null if
+      no candidate matches
+    - is_match must be true if and only if matched_variable is not null
+    - needs_recode indicates whether the values require realignment
+    - Only include candidate_recodes and target_recodes if BOTH is_match AND
+      needs_recode are true
+    - Every original value in both variables MUST appear in its recodes list
+    - Multiple original values MAY map to the same new_code when grouping
+    - new_code must be an integer starting from 1
+    - new_label should be a clear first-person statement
+    - All recodes for candidate and target must use the same set of
+      new_code/new_label pairs
+    - If is_match is false, omit candidate_recodes, target_recodes, and
+      standardised_label

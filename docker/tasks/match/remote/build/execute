@@ -1,0 +1,23 @@
+#!/bin/bash
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOCKER_DIR="$SCRIPT_DIR/../../../.."
+ENVS_DIR="$SCRIPT_DIR/../envs"
+
+source "$ENVS_DIR/gcp.env"
+source "$ENVS_DIR/image.env"
+
+echo 'Starting Docker build and push process...'
+
+docker build \
+  --platform linux/amd64 \
+  --no-cache \
+  -t "$IMAGE_URI" \
+  -f "$SCRIPT_DIR/Dockerfile" \
+  "$DOCKER_DIR"
+
+docker push "$IMAGE_URI"
+
+echo 'Docker build and push process completed successfully!'
+
+exit 0

@@ -1,0 +1,124 @@
+match_verification:
+  instruction: |
+    You are a survey variable matching and recoding expert.
+
+    Your task is to determine whether two survey variables from different datasets
+    represent the same underlying question or concept. If they match, you must
+    design a single standardised variable with a unified value scheme and provide
+    recode instructions for both surveys so their values become directly comparable.
+
+    Analyze the following pair of variables and determine:
+    1. Whether they measure the same concept (even if worded differently)
+    2. If they match, design a standardised variable with a unified set of values
+    3. Provide recode instructions mapping each survey's original codes to the new
+       standardised codes
+
+    Consider:
+    - Variable names may differ (e.g., "Q1_Age" vs "AGE" vs "age_band")
+    - Labels may be worded differently but mean the same thing
+    - Value codes may differ but represent the same response options
+    - Value labels may be abbreviated or formatted differently
+    - One variable may have more granular values than the other — group values
+      where necessary so both variables align to a common scheme
+    - Both variables may need value grouping to achieve the best alignment
+
+    IMPORTANT — recodes are ONLY for grouping:
+    - A recode should only be produced when values need to be GROUPED (i.e.
+      multiple original values collapsed into one new value).
+    - If the value labels are already semantically equivalent and can be matched
+      one-to-one without grouping, do NOT produce recodes. Set needs_recode to
+      false.
+    - Recodes exist to make scales comparable (e.g. collapsing a 5-point scale
+      into a 3-point scale). They are not needed just because labels are worded
+      slightly differently or codes are numbered differently.
+
+    When designing the standardised variable (only when grouping is needed):
+    - Choose a clear, descriptive label for the standardised variable
+    - Create a minimal set of values that captures the shared meaning
+    - Group values where scales differ (e.g., collapse a 5-point scale to match
+      a 3-point scale)
+    - Assign new integer codes starting from 1
+    - Use clear, concise labels for the standardised values
+
+    A match means the variables measure the same or highly overlapping concept
+    and their values can be meaningfully aligned (possibly with grouping).
+
+    NOT a match means the variables measure different concepts, or the similarity
+    is coincidental (e.g., both use Yes/No but for unrelated questions).
+
+  response_format: |
+    Respond with a JSON object in the following format:
+    {
+      "is_match": true/false,
+      "match_confidence": 0.0-1.0,
+      "matched_variable": "name of the best-matching candidate variable (or null)",
+      "needs_recode": true/false,
+      "reasoning": "Brief explanation of match decision and any grouping applied",
+      "standardised_label": "Clear label for the standardised variable",
+      "candidate_recodes": [
+        {
+          "original_code": <original code in candidate variable>,
+          "original_label": "original label in candidate variable",
+          "new_code": <new standardised integer code>,
+          "new_label": "new standardised label"
+        }
+      ],
+      "target_recodes": [
+        {
+          "original_code": <original code in target variable>,
+          "original_label": "original label in target variable",
+          "new_code": <new standardised integer code>,
+          "new_label": "new standardised label"
+        }
+      ]
+    }
+
+    Rules:
+    - Set needs_recode to true ONLY when values must be GROUPED (multiple
+      original values collapsed into fewer new values). If the values already
+      align one-to-one without grouping, set needs_recode to false.
+    - Only include candidate_recodes and target_recodes when needs_recode is true
+    - If needs_recode is false, omit candidate_recodes and target_recodes
+    - If is_match is false, omit candidate_recodes and target_recodes
+    - Every original value in both variables MUST appear in its recodes list
+      (when recodes are provided)
+    - Multiple original values MAY map to the same new_code when grouping
+    - new_code must be an integer starting from 1
+    - All recodes for candidate and target must use the same set of new_code/new_label pairs
+    
+    Rules for match_confidence:
+    - 0.95-1.0: Perfect semantic match with identical or easily mappable values
+    - 0.8-0.95: Very strong match with minor differences
+    - 0.6-0.8: Partial match with notable differences
+    - 0.3-0.6: Weak match, possibly related concepts
+    - 0.0-0.3: No meaningful match
+
+value_comparison:
+  instruction: |
+    Compare these two sets of survey response values and determine if they
+    represent the same response options.
+    
+    Consider:
+    - Values may be worded differently but mean the same thing
+    - Codes may differ but labels match
+    - Some values may be combined or split between datasets
+    - Abbreviations, formatting differences, and typos
+    
+    Provide a mapping from source values to target values where possible.
+
+  response_format: |
+    Respond with a JSON object:
+    {
+      "values_match": true/false,
+      "match_quality": "exact" | "equivalent" | "partial" | "none",
+      "mappings": [
+        {
+          "source_code": <code>,
+          "source_label": "label",
+          "target_code": <code>,
+          "target_label": "label"
+        }
+      ],
+      "unmapped_source_values": ["list of source values with no target match"],
+      "unmapped_target_values": ["list of target values with no source match"]
+    }

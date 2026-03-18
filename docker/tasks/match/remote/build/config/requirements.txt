@@ -1,0 +1,6 @@
+google-cloud-storage
+pandas
+pyreadstat
+python-dotenv
+
+msww-variablematcher

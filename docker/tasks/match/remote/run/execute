@@ -1,0 +1,24 @@
+#!/bin/bash
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENVS_DIR="$SCRIPT_DIR/../envs"
+
+for f in "$ENVS_DIR"/*.env; do source "$f"; done
+
+TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+VM_SUFFIX=$(echo "${CONFIG_PROJECT}" | tr '[:upper:]' '[:lower:]' | tr '_' '-' | cut -c1-40)
+VM_ID="${VM_NAME}-${VM_SUFFIX}"
+echo "Using experiment timestamp: ${TIMESTAMP}"
+echo "Using VM instance name: ${VM_ID}"
+
+echo "Creating VM instance..."
+gcloud compute instances create "${VM_ID}" \
+    --project=$PROJECT_ID \
+    --image-family=$VM_IMAGE_FAMILY \
+    --image-project=$VM_IMAGE_PROJECT \
+    --zone=$VM_ZONE \
+    --machine-type=$VM_MACHINE \
+    --hostname="${VM_ID}.${VM_ZONE}.c.${PROJECT_ID}.internal" \
+    --metadata-from-file=user-data="$SCRIPT_DIR/cloud-init.yaml" \
+    --metadata=enable-oslogin=TRUE,serial-port-logging-enable=TRUE,registry=$REGISTRY,image_uri=$IMAGE_URI,project=$PROJECT_ID,config_project=$CONFIG_PROJECT,config_target=$CONFIG_TARGET,config_candidate=$CONFIG_CANDIDATE,timestamp=${TIMESTAMP} \
+    --scopes=https://www.googleapis.com/auth/cloud-platform

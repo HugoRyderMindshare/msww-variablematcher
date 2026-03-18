@@ -1,0 +1,32 @@
+#cloud-config
+
+runcmd:
+  - |
+    echo "Cloud-init script started."
+
+    echo "Defining variables..."
+    export DOCKER_CONFIG=/home/chronos/user/.Docker
+
+    REGISTRY=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/registry)
+    IMAGE_URI=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/image_uri)
+
+    PROJECT=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/project)
+    TIMESTAMP=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/timestamp)
+    CONFIG_PROJECT=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/config_project)
+    CONFIG_TARGET=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/config_target)
+    CONFIG_CANDIDATE=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/attributes/config_candidate)
+
+    echo "Setting up Docker configuration..."
+    mkdir -p "${DOCKER_CONFIG}"
+    echo "Configuring Docker credentials for Google Container Registry..."
+    docker-credential-gcr configure-docker --registries "${REGISTRY}"
+
+    echo "Pulling matcher image..."
+    docker pull "${IMAGE_URI}"
+
+    echo "Starting matcher container..."
+    docker run "${IMAGE_URI}" --project "$PROJECT" --config_project "$CONFIG_PROJECT" --target "$CONFIG_TARGET" --candidate "$CONFIG_CANDIDATE" --timestamp "$TIMESTAMP" 2>&1 | tee /dev/ttyS0
+    echo "Matcher container ended."
+
+    echo "Shutting down instance..."
+    sudo shutdown -h now

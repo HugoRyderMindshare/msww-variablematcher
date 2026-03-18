@@ -1,0 +1,14 @@
+services:
+  variablematcher:
+    image: msww-variablematcher
+    container_name: variablematcher
+    volumes:
+      # Mount gcloud application default credentials
+      - ~/.config/gcloud/application_default_credentials.json:/app/gcloud-credentials.json:ro
+      # Optional: mount data directory for .sav files
+      - ./data:/app/data
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/gcloud-credentials.json
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}
+    restart: unless-stopped
