@@ -25,8 +25,9 @@ runcmd:
     docker pull "${IMAGE_URI}"
 
     echo "Starting matcher container..."
-    docker run "${IMAGE_URI}" --project "$PROJECT" --config_project "$CONFIG_PROJECT" --target "$CONFIG_TARGET" --candidate "$CONFIG_CANDIDATE" --timestamp "$TIMESTAMP" 2>&1 | tee /dev/ttyS0
-    echo "Matcher container ended."
+    docker run "${IMAGE_URI}" --project "$PROJECT" --config_project "$CONFIG_PROJECT" --config_target "$CONFIG_TARGET" --config_candidate "$CONFIG_CANDIDATE" --timestamp "$TIMESTAMP"
+    EXIT_CODE=$?
+    echo "Matcher container ended with exit code $EXIT_CODE."
 
     echo "Shutting down instance..."
     sudo shutdown -h now

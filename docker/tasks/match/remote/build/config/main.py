@@ -1,8 +1,9 @@
 """
 Remote (GCP) execution entrypoint for the matching Docker task.
 
-Downloads target and candidate survey .sav files from GCS, runs the
-matching pipeline, and uploads results to GCS.
+Downloads target and candidate survey .sav files from the standardise
+stage output in GCS, runs the matching pipeline, and uploads results
+back to GCS under the match stage.
 """
 
 import argparse
@@ -23,6 +24,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     stream=sys.stdout,
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("match")
 
 
@@ -39,6 +41,9 @@ load_dotenv("data.env")
 
 DATA_BUCKET = os.environ["DATA_BUCKET"]
 
+STAGE = "match"
+STAGE_INPUT = "{project}/stages/{stage}/input/{filename}.sav"
+STAGE_OUTPUT = "{project}/stages/{stage}/output/{timestamp}"
 
 DATASET_DIR = "data/datasets/run"
 
@@ -46,21 +51,26 @@ DATASET_DIR = "data/datasets/run"
 def download_surveys(
     gcp_project: str,
     config_project: str,
-    target_path: str,
-    candidate_path: str,
+    target_name: str,
+    candidate_name: str,
 ) -> None:
-    """Download target and candidate .sav files from separate GCS paths."""
+    """Download target and candidate .sav files from the match stage input."""
     client = storage.Client(project=gcp_project)
     bkt = client.bucket(DATA_BUCKET)
 
     os.makedirs(DATASET_DIR, exist_ok=True)
 
     downloads = [
-        (f"{config_project}/surveys/standardised/{target_path}.sav", "target.sav"),
-        (f"{config_project}/surveys/standardised/{candidate_path}.sav", "candidate.sav"),
+        (target_name, f"{target_name}.sav"),
+        (candidate_name, f"{candidate_name}.sav"),
     ]
 
-    for gcs_path, local_name in downloads:
+    for filename, local_name in downloads:
+        gcs_path = STAGE_INPUT.format(
+            project=config_project,
+            stage=STAGE,
+            filename=filename,
+        )
         local_path = os.path.join(DATASET_DIR, local_name)
         log.info("Downloading gs://%s/%s ...", DATA_BUCKET, gcs_path)
         t0 = time.time()
@@ -110,37 +120,44 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=str, required=True)
     parser.add_argument("--config_project", type=str, required=True)
-    parser.add_argument("--target", type=str, required=True)
-    parser.add_argument("--candidate", type=str, required=True)
+    parser.add_argument("--config_target", type=str, required=True)
+    parser.add_argument("--config_candidate", type=str, required=True)
     parser.add_argument("--timestamp", type=str, required=True)
 
     args = parser.parse_args()
 
     log.info("Configuration:")
-    log.info("  project:        %s", args.project)
-    log.info("  config_project: %s", args.config_project)
-    log.info("  target:         %s", args.target)
-    log.info("  candidate:      %s", args.candidate)
-    log.info("  timestamp:      %s", args.timestamp)
-    log.info("  data_bucket:    %s", DATA_BUCKET)
+    log.info("  project:          %s", args.project)
+    log.info("  config_project:   %s", args.config_project)
+    log.info("  config_target:    %s", args.config_target)
+    log.info("  config_candidate: %s", args.config_candidate)
+    log.info("  timestamp:        %s", args.timestamp)
+    log.info("  data_bucket:      %s", DATA_BUCKET)
     log_resources("startup")
 
     try:
-        config = TaskConfig(dataset="run")
+        config = TaskConfig(
+            dataset="run",
+            target_name=args.config_target,
+            candidate_name=args.config_candidate,
+        )
 
         # --- Download ---
         log.info("-" * 60)
-        log.info("STEP 1/3: Downloading surveys from GCS")
+        log.info("STEP 1/4: Downloading surveys from GCS")
         log.info("-" * 60)
         download_surveys(
-            args.project, args.config_project, args.target, args.candidate,
+            args.project,
+            args.config_project,
+            args.config_target,
+            args.config_candidate,
         )
         log_resources("after download")
 
         with TemporaryDirectory() as temp_dir:
             # --- Pipeline ---
             log.info("-" * 60)
-            log.info("STEP 2/3: Running matching pipeline")
+            log.info("STEP 2/4: Running matching pipeline")
             log.info("-" * 60)
             t0 = time.time()
             pipeline = Pipeline(temp_dir, config)
@@ -148,17 +165,30 @@ if __name__ == "__main__":
             log.info("Pipeline completed in %.1fs", time.time() - t0)
             log_resources("after pipeline")
 
-            # --- Upload results ---
+            # --- Upload input snapshot ---
             log.info("-" * 60)
-            log.info("STEP 3/3: Uploading results to GCS")
+            log.info("STEP 3/4: Uploading input snapshot to GCS")
             log.info("-" * 60)
-            gcs_prefix = (
-                f"{args.config_project}/surveys/matched/{args.timestamp}"
+            run_prefix = STAGE_OUTPUT.format(
+                project=args.config_project,
+                stage=STAGE,
+                timestamp=args.timestamp,
             )
             upload_to_gcs(
                 project=args.project,
                 bucket=DATA_BUCKET,
-                gcs_prefix=gcs_prefix,
+                gcs_prefix=f"{run_prefix}/input",
+                local_dir=DATASET_DIR,
+            )
+
+            # --- Upload results ---
+            log.info("-" * 60)
+            log.info("STEP 4/4: Uploading results to GCS")
+            log.info("-" * 60)
+            upload_to_gcs(
+                project=args.project,
+                bucket=DATA_BUCKET,
+                gcs_prefix=f"{run_prefix}/output",
                 local_dir=temp_dir,
             )
 

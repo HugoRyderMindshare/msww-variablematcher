@@ -7,7 +7,7 @@ DOCKER_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 CRED_FILE="${1:-$HOME/.config/gcloud/application_default_credentials.json}"
 
 echo "Building Docker image..."
-docker build --no-cache -f "$SCRIPT_DIR/build/Dockerfile" -t variablematcher "$DOCKER_DIR"
+docker build --no-cache -f "$SCRIPT_DIR/build/Dockerfile" -t match "$DOCKER_DIR"
 
 echo "Running container..."
 docker run --rm \
@@ -16,5 +16,5 @@ docker run --rm \
     -v "$CRED_FILE:/app/credentials.json:ro" \
     -v "$SCRIPT_DIR/run/.env:/app/.env:ro" \
     -e GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json \
-    variablematcher \
+    match \
     python main.py

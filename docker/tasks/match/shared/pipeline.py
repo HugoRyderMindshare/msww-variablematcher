@@ -22,21 +22,12 @@ class TaskConfig:
     """Validated configuration for a single matching run."""
 
     dataset: str
+    target_name: str
+    candidate_name: str
 
     def __post_init__(self) -> None:
         if not self.dataset:
-            raise ValueError(
-                "dataset must be a non-empty string"
-            )
-
-    @classmethod
-    def from_json(
-        cls, path: str = "config.json"
-    ) -> "TaskConfig":
-        """Load and validate configuration from a JSON file."""
-        with open(path) as f:
-            data = json.load(f)
-        return cls(**data)
+            raise ValueError("dataset must be a non-empty string")
 
 
 class Pipeline:
@@ -51,9 +42,7 @@ class Pipeline:
         Validated run configuration.
     """
 
-    def __init__(
-        self, output_dir: str, config: TaskConfig
-    ) -> None:
+    def __init__(self, output_dir: str, config: TaskConfig) -> None:
         self.output_dir = output_dir
         self.config = config
         self._data_root = "/app/data/datasets"
@@ -68,19 +57,19 @@ class Pipeline:
         """Load the target and candidate surveys from .sav files."""
         loader = SurveyLoader(root=self._data_root)
 
-        print(f"Loading target survey from: {self.config.dataset}")
-        target = loader.load_target(self.config.dataset)
-        print(f"Target has {len(target)} variables")
+        print(f"Loading target survey: {self.config.target_name}")
+        target = loader.load(self.config.dataset, self.config.target_name)
+        print(f"Target has {len(target.variables)} variables")
 
-        print(f"Loading candidate survey from: {self.config.dataset}")
-        candidate = loader.load_candidate(self.config.dataset)
-        print(f"Candidate has {len(candidate)} variables")
+        print(f"Loading candidate survey: {self.config.candidate_name}")
+        candidate = loader.load(
+            self.config.dataset, self.config.candidate_name
+        )
+        print(f"Candidate has {len(candidate.variables)} variables")
 
         return target, candidate
 
-    def _match(
-        self, target: Survey, candidate: Survey
-    ) -> MatchResult:
+    def _match(self, target: Survey, candidate: Survey) -> MatchResult:
         """Match target variables against the candidate survey."""
         print("Initialising matcher...")
         matcher = VariableMatcher()
@@ -101,14 +90,21 @@ class Pipeline:
         for m in result.matches:
             rows.append(
                 {
-                    "target_variable": m.target_variable,
-                    "candidate_variable": m.candidate_variable,
-                    "similarity_score": m.similarity_score,
-                    "match_confidence": m.match_confidence,
+                    "target_variable": m.target.variable,
+                    "candidate_variable": (
+                        m.candidate.variable if m.candidate else None
+                    ),
                     "is_match": m.is_match,
-                    "needs_recode": m.needs_recode,
-                    "standardised_label": m.standardised_label,
-                    "reasoning": m.reasoning,
+                    "target_groups": (
+                        json.dumps(m.target.groups)
+                        if m.target.groups
+                        else None
+                    ),
+                    "candidate_groups": (
+                        json.dumps(m.candidate.groups)
+                        if m.candidate and m.candidate.groups
+                        else None
+                    ),
                 }
             )
 
@@ -124,26 +120,12 @@ class Pipeline:
 
         self._save_matches_csv(result, run_dir)
 
-        n_matched = len(result.matched)
-        n_total = len(result.matches)
-        print(f"Matched {n_matched}/{n_total} target variables")
-
-        writer = SurveyWriter(root=str(run_dir))
-
-        # Save recoded target
-        try:
-            path = writer.save_target(result.target)
-            print(f"Wrote recoded target: {path}")
-        except ValueError:
-            print("Target survey has no data \u2014 skipping .sav write")
-
-        # Save recoded candidate
-        try:
-            path = writer.save_candidate(result.candidate)
-            print(f"Wrote recoded candidate: {path}")
-        except ValueError:
-            print(
-                "Candidate survey has no data — skipping .sav write"
-            )
+        writer = SurveyWriter(root=str(run_dir / "datasets"))
+        for survey in (result.target, result.candidate):
+            try:
+                path = writer.save(survey)
+                print(f"Wrote {survey.name}: {path}")
+            except Exception as e:
+                print(f"{survey.name} save failed: {e}")
 
         print(f"Done! Output saved to: {run_dir}")

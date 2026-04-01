@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "msww-variablematcher"
-version = "0.1.0"
+version = "0.1.2"
 description = "Variable matching between SAV files using embeddings and Vertex AI Gemini verification"
 requires-python = ">=3.11"
 readme = "README.md"

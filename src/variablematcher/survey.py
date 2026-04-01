@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
-from collections import defaultdict
-from typing import Iterable
+import warnings
 
 import pandas as pd
 from variablerecoder import Specification, VariableRecoder
@@ -65,34 +63,25 @@ class Survey:
         """
         return cls(data=df, meta=meta, name=name)
 
-    @classmethod
-    def from_dict(
-        cls,
-        data: Iterable[dict[str, dict[int | str, str] | list[str]]],
-        name: str | None = None,
-    ) -> Survey:
+    def to_sav(self) -> tuple[pd.DataFrame, object]:
         """
-        Create a Survey from a list of variable-values dictionaries.
-
-        Builds a minimal metadata-like object so ``variables`` works.
-        No DataFrame is stored; ``to_sav()`` will raise.
-
-        Parameters
-        ----------
-        data : Iterable of dict
-            Each key is a variable name, value is ``{code: label}``
-            or ``[labels]``.
-        name : str or None, optional
-            Name identifier for this survey.
+        Return ``(DataFrame, metadata)`` in pyreadstat read format.
 
         Returns
         -------
-        Survey
-        """
-        meta = _DictMeta.from_dict(data)
-        return cls(data=None, meta=meta, name=name)
+        tuple of (pd.DataFrame, pyreadstat metadata)
 
-    # -- Derived property --------------------------------------------------
+        Raises
+        ------
+        ValueError
+            If no data is available.
+        """
+        if self._data is None:
+            raise ValueError(
+                "No data available. Use Survey.from_sav() to load data."
+            )
+
+        return self._data.copy(), self._meta
 
     @property
     def variables(self) -> tuple[Variable, ...]:
@@ -107,39 +96,25 @@ class Survey:
 
         result = []
         for var_name in self._meta.column_names:
-            var_label = self._meta.column_names_to_labels.get(
-                var_name
-            )
+            var_label = self._meta.column_names_to_labels.get(var_name)
 
             values = None
             if var_name in self._meta.variable_value_labels:
                 vvl = self._meta.variable_value_labels[var_name]
                 values = [
-                    Value(code=code, label=str(label))
+                    Value(code=code, statement=str(label))
                     for code, label in vvl.items()
                 ]
 
             result.append(
                 Variable(
-                    name=var_name,
+                    code=var_name,
                     question=var_label,
                     values=values,
                 )
             )
 
         return tuple(result)
-
-    @property
-    def variable_names(self) -> tuple[str, ...]:
-        if self._meta is None:
-            return ()
-        return tuple(self._meta.column_names)
-
-    @property
-    def is_empty(self) -> bool:
-        return len(self.variable_names) == 0
-
-    # -- Recode ------------------------------------------------------------
 
     def add_recode(
         self,
@@ -166,155 +141,66 @@ class Survey:
             )
 
         specs = [
-            s
-            if isinstance(s, Specification)
-            else Specification(**s)
+            s if isinstance(s, Specification) else Specification(**s)
             for s in specifications
         ]
 
-        recoder = VariableRecoder(self._data, self._meta)
-        recoder.add(specs)
-        self._data, self._meta = recoder.build()
+        for spec in specs:
+            recoder = VariableRecoder(self._data, self._meta)
+            try:
+                recoder.add(spec)
+            except ValueError as e:
+                warnings.warn(
+                    f"Skipping recode for '{spec.source_code}': {e}",
+                    stacklevel=2,
+                )
+                continue
+            self._data, self._meta = recoder.build()
 
-    # -- Export ------------------------------------------------------------
+    def filter_to(self, columns: list[str]) -> None:
+        """Filter and reorder data and metadata to the given columns.
 
-    def to_sav(self) -> tuple[pd.DataFrame, object]:
+        Modifies the survey in-place. Only the listed columns
+        are kept, in the order provided.
+
+        Parameters
+        ----------
+        columns : list of str
+            Column names to keep, in the desired order.
         """
-        Return ``(DataFrame, metadata)`` in pyreadstat read format.
-
-        Returns
-        -------
-        tuple of (pd.DataFrame, pyreadstat metadata)
-
-        Raises
-        ------
-        ValueError
-            If no data is available.
-        """
-        if self._data is None:
+        if self._data is None or self._meta is None:
             raise ValueError(
                 "No data available. Use Survey.from_sav() to "
-                "load data."
+                "load data before filtering."
             )
 
-        return self._data.copy(), self._meta
+        self._data = self._data[columns]
 
-    # -- Lookup & filter ---------------------------------------------------
-
-    def get_variable_by_name(
-        self, name: str
-    ) -> Variable | None:
-        for var in self.variables:
-            if var.name == name:
-                return var
-        return None
-
-    def filter_variables(
-        self,
-        names: list[str] | None = None,
-        has_values: bool | None = None,
-        label_contains: str | None = None,
-    ) -> list[Variable]:
-        result = list(self.variables)
-
-        if names is not None:
-            result = [v for v in result if v.name in names]
-
-        if has_values is not None:
-            if has_values:
-                result = [v for v in result if v.values]
-            else:
-                result = [v for v in result if not v.values]
-
-        if label_contains is not None:
-            label_lower = label_contains.lower()
-            result = [
-                v
-                for v in result
-                if v.label and label_lower in v.label.lower()
-            ]
-
-        return result
-
-    # -- Dunder methods ----------------------------------------------------
-
-    def __hash__(self) -> int:
-        content_parts = []
-        for var in self.variables:
-            var_part = f"{var.name}:{var.label or ''}"
-            if var.values:
-                value_parts = [
-                    f"{v.code}={v.label}" for v in var.values
-                ]
-                var_part += f"[{','.join(value_parts)}]"
-            content_parts.append(var_part)
-
-        content = "|".join(content_parts)
-        hash_hex = hashlib.md5(
-            content.encode(), usedforsecurity=False
-        ).hexdigest()
-        return int(hash_hex[:16], 16)
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Survey):
-            return NotImplemented
-        return hash(self) == hash(other)
-
-    def __len__(self) -> int:
-        return len(self.variable_names)
-
-    def __getitem__(self, key: str | int) -> Variable:
-        variables = self.variables
-        if isinstance(key, int):
-            return variables[key]
-        for var in variables:
-            if var.name == key:
-                return var
-        raise KeyError(f"Variable not found: {key}")
-
-
-
-
-class _DictMeta:
-    """Minimal metadata stand-in for ``from_dict()`` surveys."""
-
-    def __init__(
-        self,
-        column_names: list[str],
-        column_names_to_labels: dict[str, str],
-        variable_value_labels: dict[str, dict],
-    ) -> None:
-        self.column_names = column_names
-        self.column_names_to_labels = column_names_to_labels
-        self.variable_value_labels = variable_value_labels
-
-    @classmethod
-    def from_dict(
-        cls,
-        data: Iterable[dict[str, dict[int | str, str] | list[str]]],
-    ) -> _DictMeta:
-        column_names: list[str] = []
-        column_names_to_labels: dict[str, str] = {}
-        variable_value_labels: dict[str, dict] = {}
-
-        for item in data:
-            for var_name, value_data in item.items():
-                column_names.append(var_name)
-                column_names_to_labels[var_name] = var_name
-
-                if isinstance(value_data, dict):
-                    variable_value_labels[var_name] = {
-                        code: str(label)
-                        for code, label in value_data.items()
-                    }
-                else:
-                    variable_value_labels[var_name] = {
-                        idx + 1: str(label)
-                        for idx, label in enumerate(value_data)
-                    }
-
-        return cls(
-            column_names=column_names,
-            column_names_to_labels=column_names_to_labels,
-            variable_value_labels=variable_value_labels,
+        label_map = dict(
+            zip(self._meta.column_names, self._meta.column_labels)
         )
+        self._meta.column_names = list(columns)
+        self._meta.column_labels = [label_map.get(c, "") for c in columns]
+
+        col_set = set(columns)
+        for attr in (
+            "column_names_to_labels",
+            "variable_value_labels",
+            "variable_measure",
+            "variable_display_width",
+            "variable_storage_width",
+            "variable_alignment",
+            "readstat_variable_types",
+            "original_variable_types",
+            "missing_ranges",
+            "missing_user_values",
+        ):
+            d = getattr(self._meta, attr, None)
+            if isinstance(d, dict):
+                setattr(
+                    self._meta,
+                    attr,
+                    {k: v for k, v in d.items() if k in col_set},
+                )
+
+        self._meta.number_columns = len(columns)

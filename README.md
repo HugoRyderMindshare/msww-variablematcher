@@ -1,14 +1,16 @@
 # msww-variablematcher
 
-A Python package for matching survey variables between SPSS SAV files using embeddings and Google Cloud AI (Gemini) verification.
+Match survey variables between SPSS SAV files using embeddings and Gemini verification.
 
 ## Overview
 
-For each **target** variable, the matcher:
+For each **target** variable the matcher:
 
-1. Finds the top-k candidates by embedding similarity
-2. Sends the target + candidates to the LLM in a single pass
-3. The LLM picks the best match (or none), decides if a recode is needed, and designs the recode if so
+1. Embeds question text via `gemini-embedding-001` and ranks candidates by cosine similarity
+2. Filters candidates by a dtype mask (categorical ↔ categorical only)
+3. Sends the target + shortlisted candidates to Gemini via a BigQuery batch job
+4. The LLM picks the best match (or none) and designs a recode if the value scales differ
+5. Recodes are applied, then both surveys are filtered and reordered to matched columns only
 
 ## Installation
 
@@ -16,216 +18,127 @@ For each **target** variable, the matcher:
 pip install msww-variablematcher
 ```
 
-Or install from source:
-
-```bash
-git clone https://github.com/msww/variablematcher.git
-cd variablematcher
-pip install -e .
-```
-
 ## Requirements
 
 - Python 3.11+
-- Google Cloud Platform project with:
-  - Vertex AI API enabled
-  - BigQuery API enabled
-  - Appropriate IAM permissions
+- Google Cloud Platform project with Vertex AI and BigQuery APIs enabled
+- Environment variables (see [Configuration](#configuration))
 
 ## Quick Start
 
 ```python
-from variablematcher import Survey, VariableMatcher, GCPConfig
 import pyreadstat
+from variablematcher import Survey, VariableMatcher
 
-# Configure GCP
-config = GCPConfig(project_id='your-gcp-project')
+# Load surveys
+df_t, meta_t = pyreadstat.read_sav("target.sav")
+target = Survey.from_sav(df_t, meta_t)
 
-# Load surveys from SAV files
-df_target, meta_target = pyreadstat.read_sav('target_data.sav')
-target = Survey.from_sav(df_target, meta_target)
+df_c, meta_c = pyreadstat.read_sav("candidate.sav")
+candidate = Survey.from_sav(df_c, meta_c)
 
-df_cand, meta_cand = pyreadstat.read_sav('candidate_data.sav')
-candidate = Survey.from_sav(df_cand, meta_cand)
+# Fit and predict
+result = VariableMatcher().fit(target, candidate).predict()
 
-# Fit (encode + similarity matrix) then predict (LLM + recodes)
-matcher = VariableMatcher(gcp_config=config)
-result = matcher.fit(target, candidate).predict()
-
-# Inspect per-variable match results
+# Inspect matches
 for m in result.matches:
-    print(f"\nTarget: {m.target_variable}")
-    print(f"  Matched to: {m.candidate_variable}")
-    print(f"  Similarity: {m.similarity_score:.3f}")
-    print(f"  Confidence: {m.match_confidence:.3f}")
-    print(f"  Needs recode: {m.needs_recode}")
+    if m.is_match:
+        print(f"{m.target_variable} -> {m.candidate_variable}")
 
-# Export recoded surveys back to .sav
-df_t, meta_t = result.target.to_sav()
-pyreadstat.write_sav(df_t, 'target_recoded.sav',
-                     column_labels=meta_t.column_labels,
-                     variable_value_labels=meta_t.variable_value_labels)
-
-df_c, meta_c = result.candidate.to_sav()
-pyreadstat.write_sav(df_c, 'candidate_recoded.sav',
-                     column_labels=meta_c.column_labels,
-                     variable_value_labels=meta_c.variable_value_labels)
+# Export filtered/ordered surveys
+df_out, meta_out = result.target.to_sav()
+pyreadstat.write_sav(df_out, "target_matched.sav",
+                     column_labels=meta_out.column_labels,
+                     variable_value_labels=meta_out.variable_value_labels)
 ```
 
 ## Configuration
 
-### Environment Variables
+GCP settings are read from environment variables — no config object is passed to the API.
 
 ```bash
-export GCP_PROJECT_ID="your-gcp-project"
-export GCP_LOCATION="us-central1"  # or your preferred region
-export BQ_DATASET="variable_matcher"  # BigQuery dataset for batch jobs
-```
-
-### Programmatic Configuration
-
-```python
-from variablematcher import GCPConfig
-
-config = GCPConfig(
-    project_id='your-gcp-project',
-    location='us-central1',
-    bq_dataset='variable_matcher',
-    model_name='gemini-2.5-flash',  # Gemini model for verification
-    embedding_model='text-embedding-005',  # Embedding model
-    embedding_dimensions=768,
-    poll_interval=30,  # Seconds between batch job status checks
-)
+export GCP_PROJECT_ID="your-project"
+export GCP_LOCATION="europe-west2"
+export BQ_DATASET="variable_matcher"      # BigQuery dataset for batch jobs
+export GCP_MODEL_NAME="gemini-2.5-flash"  # optional, default gemini-2.5-flash
+export GCP_POLL_INTERVAL="30"             # optional, seconds between batch polls
 ```
 
 ## Core Classes
 
 ### Survey
 
-Container for survey data and metadata loaded from SAV files.
+Container for survey data and metadata. The single source of truth is the
+`(DataFrame, pyreadstat metadata)` pair — `variables` is rebuilt from
+metadata on every access.
 
 ```python
 from variablematcher import Survey
 import pyreadstat
 
-# Load from SAV file (stores both DataFrame and metadata)
-df, meta = pyreadstat.read_sav('data.sav')
-survey = Survey.from_sav(df, meta)
+df, meta = pyreadstat.read_sav("data.sav")
+survey = Survey.from_sav(df, meta, name="wave_1")
 
-# Create from dictionary (no DataFrame — to_sav() will raise)
-survey = Survey.from_dict([
-    {'Q1_Age': {1: '18-24', 2: '25-34', 3: '35-44'}},
-    {'Q2_Gender': ['Male', 'Female', 'Other']},
-])
-
-# Access variables
+# Variables are derived from metadata
 for var in survey.variables:
-    print(f"{var.name}: {var.label}")
+    print(f"{var.code}: {var.question}")
     if var.values:
         for val in var.values:
-            print(f"  {val.code}: {val.label}")
+            print(f"  {val.code}: {val.statement}")
 
-# Filter variables
-categorical_vars = survey.filter_variables(has_values=True)
-age_vars = survey.filter_variables(label_contains='age')
+# Filter
+categorical = survey.filter_variables(has_values=True)
+age_vars = survey.filter_variables(label_contains="age")
 
-# Export to SAV (returns DataFrame + metadata in read format)
+# Variables without a question are excluded from matching
+survey.no_question_variables  # tuple of variable codes
+
+# Export
 df_out, meta_out = survey.to_sav()
-pyreadstat.write_sav(df_out, 'output.sav',
-                     column_labels=meta_out.column_labels,
-                     variable_value_labels=meta_out.variable_value_labels)
 ```
 
 ### VariableMatcher
 
-Main class for matching target variables against a candidate survey. Uses a `fit` / `predict` API.
+Fit / predict API. Encodes surveys, builds a similarity matrix, runs LLM
+verification, applies recodes, and filters both surveys to matched columns.
 
 ```python
-from variablematcher import VariableMatcher, GCPConfig
+from variablematcher import VariableMatcher
 
-config = GCPConfig(project_id='my-project')
 matcher = VariableMatcher(
-    gcp_config=config,
-    min_ratio=0.8,  # Candidates must score >= 80% of best similarity
-    top_k=5,  # Number of candidates per target variable
-    include_values_in_encoding=True,  # Include value labels in embeddings
+    min_ratio=0.8,  # candidates must score >= 80% of best similarity
+    top_k=5,        # max candidates per target variable
 )
 
-# fit: encode surveys + compute similarity matrix
-matcher.fit(target, candidate)
-
-# predict: select candidates, run LLM, apply recodes, return result
-result = matcher.predict()
-
-# Or chain: result = matcher.fit(target, candidate).predict()
-
-# Match specific target variables only
-result = matcher.fit(
-    target, candidate, variable_names=['Q1_Age', 'Q2_Gender']
-).predict()
+# fit: embed questions, compute cosine similarity, apply dtype mask
+# predict: shortlist candidates, LLM batch, apply recodes, filter & order
+result = matcher.fit(target, candidate).predict()
 ```
 
 ### MatchResult
 
-Contains both (possibly recoded) surveys and per-variable match metadata.
+Contains both filtered, positionally aligned surveys and per-variable match metadata.
 
 ```python
-result = matcher.fit(target, candidate).predict()
-
-# The recoded surveys
-result.target     # Survey (recoded if needed)
-result.candidate  # Survey (recoded if needed)
-
-# Per-variable match decisions
-for m in result.matches:
-    print(f"Target: {m.target_variable}")
-    print(f"  Candidate: {m.candidate_variable}")
-    print(f"  Is match: {m.is_match}")
-    print(f"  Similarity: {m.similarity_score:.3f}")
-    print(f"  Confidence: {m.match_confidence:.3f}")
-    if m.needs_recode:
-        print(f"  Standardised label: {m.standardised_label}")
-        print(f"  Target recodes: {m.target_recodes}")
-        print(f"  Candidate recodes: {m.candidate_recodes}")
-
-# Convenience filters
-result.matched    # list[VariableMatch] — only successful matches
-result.unmatched  # list[VariableMatch] — unmatched target variables
+result.target      # Survey — recoded, filtered, and ordered to matched columns
+result.candidate   # Survey — recoded, filtered, and ordered to matched columns
+result.matches     # list[VariableMatch] — per-variable LLM decisions
 ```
 
-### EmbeddingEncoder
+### VariableMatch
 
-Generates embeddings for variables and values using the Google GenAI API.
+Per-variable outcome from the LLM verification step.
 
 ```python
-from variablematcher import EmbeddingEncoder, GCPConfig
-
-config = GCPConfig(project_id='my-project')
-encoder = EmbeddingEncoder(
-    gcp_config=config,
-    batch_size=250,  # Max texts per API call
-)
-
-# Encode a survey (returns dict of variable name → embedding)
-embeddings = encoder.encode_survey(survey)
-
-# Encode specific texts
-embeddings = encoder.encode_texts([
-    'What is your age?',
-    'How old are you?',
-    'Age group',
-])
-
-# Encode variables
-embeddings = encoder.encode_variables(survey.variables)
+for m in result.matches:
+    print(m.target_variable)       # str — target variable code
+    print(m.candidate_variable)    # str | None — matched candidate code
+    print(m.is_match)              # bool — whether a match was confirmed
+    print(m.target_groups)         # dict | None — recode groups for target
+    print(m.candidate_groups)      # dict | None — recode groups for candidate
 ```
 
 ## Pipeline Flow
-
-1. **Load Surveys**: Load SAV files into Survey objects (DataFrame + metadata)
-2. **fit()**: Encode both surveys, compute cosine similarity matrix
-3. **predict()**: Select top-k candidates per target, run LLM batch job, apply recodes to both surveys
-4. **Export**: Call `to_sav()` on result.target / result.candidate
 
 ```
 Target SAV ──> Survey.from_sav() ──┐
@@ -233,6 +146,12 @@ Target SAV ──> Survey.from_sav() ──┐
 Candidate SAV ──> Survey.from_sav() ┘                              │
                                                           ┌────────┴────────┐
                                                      result.target    result.candidate
+                                                     (filtered &      (filtered &
+                                                      ordered)         ordered)
                                                           │                 │
                                                      .to_sav()         .to_sav()
 ```
+
+1. **fit** — Embed variable questions, compute cosine similarity, zero out cross-dtype pairs
+2. **predict** — Shortlist top-k candidates, send to Gemini via BQ batch, parse recode specs, apply recodes, filter and order both surveys to matched columns
+3. **Export** — `to_sav()` returns the filtered, positionally aligned data and metadata

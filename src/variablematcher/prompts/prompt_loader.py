@@ -25,9 +25,7 @@ class PromptLoader:
     match_response_format: str
 
     @classmethod
-    def from_yaml(
-        cls, path: Path = _DEFAULT_PATH
-    ) -> "PromptLoader":
+    def from_yaml(cls, path: Path = _DEFAULT_PATH) -> "PromptLoader":
         """
         Load prompts from a YAML file.
 
@@ -52,9 +50,7 @@ class PromptLoader:
         """
         data = yaml.safe_load(path.read_text())
         return cls(
-            match_instruction=data["match_verification"][
-                "instruction"
-            ],
+            match_instruction=data["match_verification"]["instruction"],
             match_response_format=data["match_verification"][
                 "response_format"
             ],

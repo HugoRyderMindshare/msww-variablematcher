@@ -1,7 +1,7 @@
 services:
-  variablematcher:
-    image: msww-variablematcher
-    container_name: variablematcher
+  match:
+    image: match
+    container_name: match
     volumes:
       # Mount gcloud application default credentials
       - ~/.config/gcloud/application_default_credentials.json:/app/gcloud-credentials.json:ro
